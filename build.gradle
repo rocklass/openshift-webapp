@@ -1,6 +1,6 @@
 buildscript {
     ext {
-        springBootVersion = '1.2.1.RELEASE'
+        springBootVersion = '1.3.0.RELEASE'
     }
     repositories {
         mavenCentral()
@@ -12,12 +12,13 @@ buildscript {
         compile.exclude module: "spring-boot-starter-tomcat"
     }
 }
+
 apply plugin: 'java'
 apply plugin: 'spring-boot'
 
 jar {
-    baseName = 'demo'
-    version = '0.0.1-SNAPSHOT'
+    baseName = 'openshift-webapp'
+    version = '0.1-SNAPSHOT'
 }
 sourceCompatibility = 1.8
 targetCompatibility = 1.8
@@ -35,5 +36,5 @@ dependencies {
 }
 
 task wrapper(type: Wrapper) {
-    gradleVersion = '2.2.1'
+    gradleVersion = '2.9'
 }
