@@ -1,27 +1,36 @@
 buildscript {
-    ext {
-        springBootVersion = '1.3.0.RELEASE'
-    }
     repositories {
         mavenCentral()
     }
     dependencies {
-        classpath("org.springframework.boot:spring-boot-gradle-plugin:${springBootVersion}")
+        classpath "org.springframework.boot:spring-boot-gradle-plugin:${springBootVersion}"
+		classpath "com.bmuschko:gradle-docker-plugin:$gradleDockerPluginVersion"
     }
     configurations {
         compile.exclude module: "spring-boot-starter-tomcat"
     }
 }
 
-apply plugin: 'java'
-apply plugin: 'spring-boot'
-
-jar {
-    baseName = 'openshift-webapp'
-    version = '0.1-SNAPSHOT'
+plugins {
+	id "org.sonarqube" version "1.1"
+	id "com.github.kt3k.coveralls" version "2.4.0"
+	id "net.researchgate.release" version "2.3.4"
+	id "com.jfrog.bintray" version "1.5"
 }
+
+apply plugin: "java"
+apply plugin: "eclipse"
+apply plugin: "spring-boot"
+apply plugin: "jacoco"
+apply plugin: "findbugs"
+apply plugin: "pmd"
+apply plugin: "com.bmuschko.docker-java-application"
+apply plugin: "maven-publish"
+
 sourceCompatibility = 1.8
 targetCompatibility = 1.8
+
+group = "org.rocklass"
 
 repositories {
     mavenCentral()
@@ -35,6 +44,166 @@ dependencies {
     testCompile("org.springframework.boot:spring-boot-starter-test")
 }
 
+jar {
+	baseName = jarBaseName
+	doFirst {
+	    manifest {
+	        attributes 	"Implementation-Title": title,
+	        			"Implementation-Version": version
+	    }
+    }
+}
+
+task sourcesJar(type: Jar, dependsOn: classes) {
+	baseName = jarBaseName
+    classifier = "sources"
+    from sourceSets.main.allSource
+}
+
+task javadocJar(type: Jar, dependsOn: javadoc) {
+    classifier = "javadoc"
+    from javadoc.destinationDir
+}
+
 task wrapper(type: Wrapper) {
-    gradleVersion = '2.9'
+    gradleVersion = "2.9"
+}
+
+artifacts {
+    archives sourcesJar
+    archives javadocJar
+}
+
+// filter resources with properties
+import org.apache.tools.ant.filters.ReplaceTokens
+
+processResources {
+	// read properties from gradle.properties
+	def properties = new Properties()
+    file("gradle.properties").withInputStream {
+        properties.load(it);   
+    }
+    
+	from("src/main/resources") {
+        exclude "static/*"
+        filter(ReplaceTokens, tokens: properties)
+    }
+}
+
+jacocoTestReport {
+	doFirst {
+		classDirectories = files("build/classes/main/org/rocklass")
+	}
+    reports {
+        xml.enabled true
+    }
+}
+
+findbugs {
+    ignoreFailures = true
+}
+
+tasks.withType(FindBugs) {
+	reports {
+		xml.enabled = false
+		html.enabled = true
+	}
+}
+
+pmd {
+    ruleSetFiles = files("config/pmd/ruleset.xml")
+    ignoreFailures = true
+}
+
+sonarqube {
+	properties {
+		// properties from GRADLE_USER_HOME/gradle.properties
+        property "sonar.host.url", project.hasProperty("sonarHostUrl") ? project.getProperty("sonarHostUrl") : ""
+        property "sonar.jdbc.url", project.hasProperty("sonarJdbcUrl") ? project.getProperty("sonarJdbcUrl") : ""
+        property "sonar.jdbc.driverClassName", project.hasProperty("sonarJdbcDriver") ? project.getProperty("sonarJdbcDriver") : ""
+        property "sonar.jdbc.username", project.hasProperty("sonarJdbcUser") ? project.getProperty("sonarJdbcUser") : ""
+        property "sonar.jdbc.password", project.hasProperty("sonarJdbcPassword") ? project.getProperty("sonarJdbcPassword") : ""
+	}
+}
+
+// running container on docker: docker run -p $port:$port $tag
+docker {
+	// properties from GRADLE_USER_HOME/gradle.properties
+    url = project.hasProperty("dockerUrl") ? project.getProperty("dockerUrl") : ""
+    certPath = new File(project.hasProperty("dockerCertPath") ? project.getProperty("dockerCertPath") : "")
+
+    javaApplication {
+        baseImage = "dockerfile/java:oracle-java8"
+
+        maintainer = "rocklass"
+        tag = "$maintainer/$jarBaseName:$version"
+        port = serverPort as Integer
+    }
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+            
+            artifact sourcesJar {
+                classifier "sources"
+            }
+            
+            artifact javadocJar {
+                classifier "javadoc"
+            }
+        }
+    }
+}
+
+// update version during release (no snapshot)
+confirmReleaseVersion << {
+    publishing.publications.mavenJava.version = project.version
+    jar.version = project.version
+    sourcesJar.version = project.version
+    javadocJar.version = project.version
+    publishing.publications.mavenJava.setArtifacts([jar, sourcesJar])
+    bintrayUpload.versionName = project.version
+    bintrayUpload.versionVcsTag = project.version
+}
+
+uploadArchives {
+    repositories {
+       flatDir {
+           dirs "repository"
+       }
+    }
+}
+
+release {
+	failOnPublishNeeded = false
+	tagTemplate = project.name
+}
+
+// upload to bintray during release
+createReleaseTag.dependsOn bintrayUpload
+
+bintray {
+	// properties from GRADLE_USER_HOME/gradle.properties
+    user = project.hasProperty("bintrayUser") ? project.getProperty("bintrayUser") : ""
+    key = project.hasProperty("bintrayKey") ? project.getProperty("bintrayKey") : ""
+
+    publications = ["mavenJava"]
+    dryRun = false
+    publish = true
+    pkg {
+        repo = "maven"
+        name = project.name
+        desc = "Full Stack Laboratory"
+        websiteUrl = "https://github.com/rocklass/openshift-webapp"
+        issueTrackerUrl = "https://github.com/rocklass/openshift-webapp/issues"
+        vcsUrl = "https://github.com/rocklass/openshift-webapp.git"
+        licenses = ["GPL-3.0"]
+        publicDownloadNumbers = true
+        version {
+                name = project.version
+                vcsTag = project.version
+        }
+    }
 }
